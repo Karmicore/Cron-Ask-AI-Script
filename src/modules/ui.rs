@@ -171,11 +171,6 @@ impl CronAskApp {
                 if offset_min > offset_max {
                     return Some("最小偏移不能大于最大偏移".to_string());
                 }
-                // 新增：验证偏移量不应超过基础时长
-                let base_secs = base_minutes * 60 + base_seconds;
-                if offset_max >= base_secs {
-                    return Some("最大偏移不应超过基础时长".to_string());
-                }
             }
         }
         if task.hotkey.key.is_empty() {
@@ -369,7 +364,7 @@ impl CronAskApp {
                     "-".to_string()
                 }
             } else if task.enabled {
-                "计算中...".to_string()
+                "⏳ 等待中...".to_string()
             } else {
                 "-".to_string()
             };
@@ -429,9 +424,26 @@ impl CronAskApp {
                                         ));
                                     }
                                 }
-                                ui.label("|");
-                                ui.label(format!("⏱ {}", next_str));
                             });
+                            // 倒计时独立一行，更显眼
+                            if task.enabled {
+                                let color = if let Some(next) = self.next_triggers.get(&task.id) {
+                                    let secs = (*next - chrono::Local::now()).num_seconds();
+                                    if secs <= 10 {
+                                        egui::Color32::from_rgb(255, 80, 80) // 即将触发，红色
+                                    } else if secs <= 60 {
+                                        egui::Color32::from_rgb(255, 200, 0) // 1分钟内，黄色
+                                    } else {
+                                        egui::Color32::from_rgb(100, 220, 255) // 正常，蓝色
+                                    }
+                                } else {
+                                    egui::Color32::GRAY
+                                };
+                                ui.horizontal(|ui| {
+                                    ui.label("⏱");
+                                    ui.colored_label(color, &next_str);
+                                });
+                            }
                         });
 
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -556,7 +568,7 @@ impl CronAskApp {
                         ui.label("最小偏移:");
                         ui.horizontal(|ui| {
                             ui.label("分:");
-                            ui.add(egui::DragValue::new(offset_min_minutes).range(0..=60));
+                            ui.add(egui::DragValue::new(offset_min_minutes).range(0..=1440));
                             ui.label("秒:");
                             ui.add(egui::DragValue::new(offset_min_seconds).range(0..=59));
                         });
@@ -565,7 +577,7 @@ impl CronAskApp {
                         ui.label("最大偏移:");
                         ui.horizontal(|ui| {
                             ui.label("分:");
-                            ui.add(egui::DragValue::new(offset_max_minutes).range(0..=60));
+                            ui.add(egui::DragValue::new(offset_max_minutes).range(0..=1440));
                             ui.label("秒:");
                             ui.add(egui::DragValue::new(offset_max_seconds).range(0..=59));
                         });

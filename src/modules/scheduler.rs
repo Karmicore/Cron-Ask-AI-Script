@@ -87,10 +87,7 @@ pub fn compute_next_delay(trigger: &TriggerMode) -> (Duration, Option<chrono::Da
             let positive: bool = rng.gen();
             let final_offset = if positive { offset as i64 } else { -(offset as i64) };
 
-            // 限制偏移量不超过 base 的 90%，避免偏移量过大导致极短间隔
-            let max_offset = (base_secs as f64 * 0.9) as i64;
-            let final_offset = final_offset.clamp(-max_offset, max_offset);
-
+            // 确保最终间隔至少为 1 秒
             let total_secs = (base_secs as i64 + final_offset).max(1) as u64;
             let next = Local::now() + chrono::Duration::seconds(total_secs as i64);
             (Duration::from_secs(total_secs), Some(next))
