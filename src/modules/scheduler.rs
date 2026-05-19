@@ -2,6 +2,7 @@ use chrono::{Local, TimeZone};
 use rand::Rng;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use tokio::task::JoinHandle;
 
 use super::config::{Hotkey, Task, TriggerMode};
 
@@ -21,9 +22,6 @@ pub enum SchedulerMessage {
         next_time: Option<chrono::DateTime<Local>>,
     },
 }
-
-/// 共享任务状态 — 调度器读取，UI 写入
-pub type SharedTasks = Arc<Mutex<Vec<Task>>>;
 
 /// 计算下次触发的延迟时间
 pub fn compute_next_delay(trigger: &TriggerMode) -> (Duration, Option<chrono::DateTime<Local>>) {
@@ -89,93 +87,65 @@ pub fn compute_next_delay(trigger: &TriggerMode) -> (Duration, Option<chrono::Da
 
 /// 调度器 — 管理所有任务的生命周期
 pub struct Scheduler {
-    tasks: SharedTasks,
     msg_tx: std::sync::mpsc::Sender<SchedulerMessage>,
     rt: tokio::runtime::Runtime,
-    /// 活跃的 task id → JoinHandle 标记（用于跟踪哪些在跑）
-    active_ids: Arc<Mutex<Vec<String>>>,
+    /// 活跃任务句柄 — task_id → JoinHandle，用于真正取消任务
+    active_handles: Arc<Mutex<Vec<(String, JoinHandle<()>)>>>,
 }
 
 impl Scheduler {
     /// 创建调度器，返回 (Scheduler, 消息接收端)
-    pub fn new(tasks: Vec<Task>) -> (Self, std::sync::mpsc::Receiver<SchedulerMessage>) {
+    pub fn new(_tasks: Vec<Task>) -> (Self, std::sync::mpsc::Receiver<SchedulerMessage>) {
         let (msg_tx, msg_rx) = std::sync::mpsc::channel::<SchedulerMessage>();
-        let shared = Arc::new(Mutex::new(tasks));
         let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
-        let active_ids = Arc::new(Mutex::new(Vec::new()));
+        let active_handles = Arc::new(Mutex::new(Vec::new()));
 
         let scheduler = Scheduler {
-            tasks: shared,
             msg_tx,
             rt,
-            active_ids,
+            active_handles,
         };
 
         (scheduler, msg_rx)
     }
 
     /// 启动所有当前启用的任务
-    pub fn start_all(&mut self) {
-        let tasks_to_start: Vec<Task> = {
-            let tasks = self.tasks.lock().unwrap();
-            tasks.iter()
-                .filter(|t| t.enabled)
-                .cloned()
-                .collect()
-        };
-        for task in tasks_to_start {
-            self.spawn_task(task);
+    pub fn start_all(&mut self, tasks: &[Task]) {
+        for task in tasks.iter().filter(|t| t.enabled) {
+            self.spawn_task(task.clone());
         }
     }
 
-    /// 停止所有任务（清空活跃列表）
+    /// 停止所有任务 — 真正取消 tokio task（abort）
     pub fn stop_all(&mut self) {
-        self.active_ids.lock().unwrap().clear();
+        let mut handles = self.active_handles.lock().unwrap();
+        for (_, handle) in handles.drain(..) {
+            handle.abort();
+        }
+    }
+
+    /// 停止指定任务
+    #[allow(dead_code)]
+    pub fn stop_task(&mut self, task_id: &str) {
+        let mut handles = self.active_handles.lock().unwrap();
+        if let Some(pos) = handles.iter().position(|(id, _)| id == task_id) {
+            let (_, handle) = handles.remove(pos);
+            handle.abort();
+        }
     }
 
     /// 重新加载配置 — 停止旧任务，启动新任务
     pub fn reload_tasks(&mut self, new_tasks: Vec<Task>) {
         self.stop_all();
-        *self.tasks.lock().unwrap() = new_tasks;
-        // 重新启动
-        let tasks_to_start: Vec<Task> = {
-            let tasks = self.tasks.lock().unwrap();
-            tasks.iter()
-                .filter(|t| t.enabled)
-                .cloned()
-                .collect()
-        };
-        for task in tasks_to_start {
-            self.spawn_task(task);
-        }
-    }
-
-    /// 获取共享任务引用（UI 侧读取/写入）
-    #[allow(dead_code)]
-    pub fn shared_tasks(&self) -> SharedTasks {
-        self.tasks.clone()
+        self.start_all(&new_tasks);
     }
 
     fn spawn_task(&mut self, task: Task) {
         let task_id = task.id.clone();
-        // 记录为活跃
-        self.active_ids.lock().unwrap().push(task_id.clone());
-
         let msg_tx = self.msg_tx.clone();
-        let active_ids = self.active_ids.clone();
-        let task_id_check = task_id.clone();
 
-        self.rt.spawn(async move {
+        let handle = self.rt.spawn(async move {
             loop {
-                // 检查此任务是否仍然活跃
-                {
-                    let ids = active_ids.lock().unwrap();
-                    if !ids.contains(&task_id_check) {
-                        log::info!("任务 {} 已被停止，退出循环", task_id_check);
-                        break;
-                    }
-                }
-
                 let (delay, next_time) = compute_next_delay(&task.trigger);
 
                 // 通知下次触发时间
@@ -184,16 +154,8 @@ impl Scheduler {
                     next_time,
                 });
 
-                // 等待
+                // 等待（如果被 abort，这里会直接退出，不会继续执行）
                 tokio::time::sleep(delay).await;
-
-                // 再次检查是否仍活跃
-                {
-                    let ids = active_ids.lock().unwrap();
-                    if !ids.contains(&task_id_check) {
-                        break;
-                    }
-                }
 
                 // 触发
                 log::info!("任务触发: {} ({})", task.name, task.id);
@@ -204,6 +166,8 @@ impl Scheduler {
                 });
             }
         });
+
+        self.active_handles.lock().unwrap().push((task_id, handle));
     }
 }
 

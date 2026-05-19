@@ -18,17 +18,17 @@ fn main() -> Result<(), eframe::Error> {
 
     // 创建调度器
     let (mut scheduler, scheduler_rx) = Scheduler::new(config.tasks.clone());
-    scheduler.start_all();
+    scheduler.start_all(&config.tasks);
 
     // 配置 eframe
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([640.0, 520.0])
+            .with_inner_size([640.0, 560.0])
             .with_min_inner_size([480.0, 400.0]),
         ..Default::default()
     };
 
-    // 创建应用（调度器 + 消息接收端一起传入）
+    // 创建应用
     let app = CronAskApp::new(config, scheduler, scheduler_rx);
 
     eframe::run_native(

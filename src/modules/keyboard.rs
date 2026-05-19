@@ -56,14 +56,20 @@ fn key_from_str(key: &str) -> Option<Key> {
     }
 }
 
-/// 发送按键按下事件
+/// 发送按键按下事件（带错误日志）
 fn send_key_press(key: Key) {
-    simulate(&EventType::KeyPress(key)).ok();
+    match simulate(&EventType::KeyPress(key)) {
+        Ok(()) => {}
+        Err(e) => log::warn!("按键按下失败 {:?}: {:?}", key, e),
+    }
 }
 
-/// 发送按键释放事件
+/// 发送按键释放事件（带错误日志）
 fn send_key_release(key: Key) {
-    simulate(&EventType::KeyRelease(key)).ok();
+    match simulate(&EventType::KeyRelease(key)) {
+        Ok(()) => {}
+        Err(e) => log::warn!("按键释放失败 {:?}: {:?}", key, e),
+    }
 }
 
 /// 在后台线程执行快捷键（避免阻塞 UI 线程）
@@ -104,12 +110,6 @@ pub fn execute_hotkey_sync(modifiers: &[ModifierKey], key: &str) -> Result<(), S
     }
 
     Ok(())
-}
-
-/// 保留同步版本作为公共 API（兼容测试按钮）
-#[allow(dead_code)]
-pub fn execute_hotkey(modifiers: &[ModifierKey], key: &str) -> Result<(), String> {
-    execute_hotkey_sync(modifiers, key)
 }
 
 /// 可用按键列表（静态，避免每帧分配）

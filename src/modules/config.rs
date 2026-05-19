@@ -19,10 +19,10 @@ pub enum TriggerMode {
     CountdownRandom {
         base_minutes: u64,
         base_seconds: u64,
-        /// 随机偏移的最小分钟数（负方向）
+        /// 随机偏移的最小分钟数
         offset_min_minutes: u64,
         offset_min_seconds: u64,
-        /// 随机偏移的最大分钟数（正方向）
+        /// 随机偏移的最大分钟数
         offset_max_minutes: u64,
         offset_max_seconds: u64,
     },
@@ -56,6 +56,14 @@ pub enum ModifierKey {
     Super, // Win键
 }
 
+/// 修饰键静态列表（零分配）
+static ALL_MODIFIERS: &[ModifierKey] = &[
+    ModifierKey::Ctrl,
+    ModifierKey::Alt,
+    ModifierKey::Shift,
+    ModifierKey::Super,
+];
+
 impl ModifierKey {
     pub fn display_name(&self) -> &str {
         match self {
@@ -66,13 +74,9 @@ impl ModifierKey {
         }
     }
 
-    pub fn all() -> Vec<ModifierKey> {
-        vec![
-            ModifierKey::Ctrl,
-            ModifierKey::Alt,
-            ModifierKey::Shift,
-            ModifierKey::Super,
-        ]
+    /// 获取所有修饰键（返回静态切片，零分配）
+    pub fn all() -> &'static [ModifierKey] {
+        ALL_MODIFIERS
     }
 }
 
@@ -94,11 +98,19 @@ impl Default for Hotkey {
 
 impl Hotkey {
     pub fn display(&self) -> String {
-        let mods: Vec<&str> = self.modifiers.iter().map(|m| m.display_name()).collect();
-        if mods.is_empty() {
+        if self.modifiers.is_empty() {
             self.key.clone()
         } else {
-            format!("{}+{}", mods.join("+"), self.key)
+            let mut s = String::with_capacity(32);
+            for (i, m) in self.modifiers.iter().enumerate() {
+                if i > 0 {
+                    s.push('+');
+                }
+                s.push_str(m.display_name());
+            }
+            s.push('+');
+            s.push_str(&self.key);
+            s
         }
     }
 }
@@ -129,8 +141,14 @@ impl Default for Task {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     pub tasks: Vec<Task>,
+    #[serde(default)]
     pub autostart: bool,
+    #[serde(default = "default_true")]
     pub minimize_on_close: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl Default for AppConfig {
@@ -203,14 +221,36 @@ impl AppConfig {
     }
 }
 
+/// 跨平台配置目录
 fn dirs_config_dir() -> PathBuf {
     // Windows: %APPDATA%
-    // 如果 dirs crate 不可用，手动获取
+    // macOS: ~/Library/Application Support
+    // Linux: $XDG_CONFIG_HOME 或 ~/.config
     if let Ok(appdata) = std::env::var("APPDATA") {
-        PathBuf::from(appdata)
-    } else {
-        PathBuf::from(".")
+        // Windows
+        return PathBuf::from(appdata);
     }
+
+    if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
+        // Linux (XDG)
+        return PathBuf::from(xdg);
+    }
+
+    // macOS / Linux fallback
+    if let Ok(home) = std::env::var("HOME") {
+        // macOS: ~/Library/Application Support
+        let mac_path = PathBuf::from(&home)
+            .join("Library")
+            .join("Application Support");
+        if mac_path.exists() {
+            return mac_path;
+        }
+        // Linux fallback: ~/.config
+        return PathBuf::from(home).join(".config");
+    }
+
+    // 最终 fallback
+    PathBuf::from(".")
 }
 
 /// 生成短 UUID — 使用计数器+纳秒避免冲突
@@ -244,6 +284,15 @@ mod tests {
     }
 
     #[test]
+    fn test_hotkey_display_no_modifiers() {
+        let hk = Hotkey {
+            modifiers: vec![],
+            key: "F1".to_string(),
+        };
+        assert_eq!(hk.display(), "F1");
+    }
+
+    #[test]
     fn test_config_default() {
         let config = AppConfig::default();
         assert!(!config.tasks.is_empty());
@@ -256,5 +305,20 @@ mod tests {
         let toml_str = toml::to_string_pretty(&config).unwrap();
         let parsed: AppConfig = toml::from_str(&toml_str).unwrap();
         assert_eq!(parsed.tasks.len(), config.tasks.len());
+    }
+
+    #[test]
+    fn test_uuid_uniqueness() {
+        let id1 = uuid_short();
+        let id2 = uuid_short();
+        assert_ne!(id1, id2, "连续生成的 UUID 不应重复");
+    }
+
+    #[test]
+    fn test_modifier_all_static() {
+        let all = ModifierKey::all();
+        assert_eq!(all.len(), 4);
+        // 证明是静态切片（编译期检查）
+        let _static_ref: &'static [ModifierKey] = all;
     }
 }
