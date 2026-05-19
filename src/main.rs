@@ -85,7 +85,7 @@ fn main() -> Result<(), eframe::Error> {
     )
 }
 
-/// 加载图标 PNG 并转为 RGBA 字节
+/// 加载图标 PNG 并转为 RGBA 字节，自动将白色/近白色像素设为透明
 fn load_icon() -> Option<Vec<u8>> {
     let exe_dir = std::env::current_exe().ok()?;
     let icon_path = exe_dir.parent()?.join("assets/icon.png");
@@ -98,8 +98,19 @@ fn load_icon() -> Option<Vec<u8>> {
     };
 
     let img = image::open(icon_path).ok()?;
-    let resized = img.resize_exact(64, 64, image::imageops::FilterType::Lanczos3);
-    Some(resized.to_rgba8().to_vec())
+    let mut resized = img.resize_exact(64, 64, image::imageops::FilterType::Lanczos3);
+    let rgba_image = resized.as_mut_rgba8().unwrap();
+
+    // 将白色/近白色背景像素设为透明（alpha=0）
+    for pixel in rgba_image.pixels_mut() {
+        let [r, g, b, _a] = pixel.0;
+        // 近白色阈值：RGB 各通道 > 240 视为白色背景
+        if r > 240 && g > 240 && b > 240 {
+            *pixel = image::Rgba([r, g, b, 0]);
+        }
+    }
+
+    Some(rgba_image.to_vec())
 }
 
 /// 创建系统托盘图标
