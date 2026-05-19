@@ -40,6 +40,24 @@ fn main() -> Result<(), eframe::Error> {
             style.visuals = egui::Visuals::dark();
             cc.egui_ctx.set_style(style);
 
+            // 加载中文字体，解决乱码问题
+            let mut fonts = egui::FontDefinitions::default();
+            if let Ok(font_data) = std::fs::read("C:/Windows/Fonts/msyh.ttc") {
+                fonts.font_data.insert(
+                    "msyh".into(),
+                    egui::FontData::from_owned(font_data),
+                );
+                // 将中文字体插入到所有字体的回退列表中
+                fonts.families.entry(egui::FontFamily::Proportional).or_default()
+                    .push("msyh".into());
+                fonts.families.entry(egui::FontFamily::Monospace).or_default()
+                    .push("msyh".into());
+                cc.egui_ctx.set_fonts(fonts);
+                log::info!("已加载中文字体: msyh");
+            } else {
+                log::warn!("未找到中文字体 msyh.ttc，中文可能显示为乱码");
+            }
+
             Ok(Box::new(app))
         }),
     )
