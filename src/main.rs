@@ -10,8 +10,11 @@ use eframe::egui;
 use std::sync::{Arc, Mutex};
 
 fn main() -> Result<(), eframe::Error> {
-    // 初始化日志
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+    // 无控制台模式下，将 panic 信息写入日志文件
+    setup_panic_hook();
+
+    // 初始化日志（写到文件）
+    setup_logger();
 
     log::info!("Cron-Ask-AI v0.1.0 启动");
 
@@ -87,6 +90,49 @@ fn main() -> Result<(), eframe::Error> {
     )
 }
 
+/// 设置 panic hook，将 panic 信息写入日志文件（无控制台时可用）
+fn setup_panic_hook() {
+    std::panic::set_hook(Box::new(|panic_info| {
+        let log_path = get_log_dir().join("panic.log");
+        let msg = format!("{}", panic_info);
+        let _ = std::fs::write(&log_path, &msg);
+        // 也尝试写到 stderr（虽然 windows_subsystem 下不可见，但调试时有用）
+        eprintln!("PANIC: {}", msg);
+    }));
+}
+
+/// 获取日志目录（%APPDATA%/cron-ask-ai/logs）
+fn get_log_dir() -> std::path::PathBuf {
+    let dir = std::env::var("APPDATA")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| std::path::PathBuf::from("."))
+        .join("cron-ask-ai")
+        .join("logs");
+    let _ = std::fs::create_dir_all(&dir);
+    dir
+}
+
+/// 初始化日志，同时输出到文件和 stderr
+fn setup_logger() {
+    let log_dir = get_log_dir();
+    let log_file = log_dir.join("app.log");
+
+    // 尝试创建文件日志
+    if let Ok(file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_file)
+    {
+        env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+            .target(env_logger::Target::Pipe(Box::new(file)))
+            .init();
+    } else {
+        // 文件创建失败，回退到 stderr
+        let _ = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+            .init();
+    }
+}
+
 /// 加载图标 PNG 并转为 RGBA 字节，自动将白色/近白色像素设为透明
 fn load_icon() -> Option<Vec<u8>> {
     let exe_dir = std::env::current_exe().ok()?;
@@ -99,9 +145,15 @@ fn load_icon() -> Option<Vec<u8>> {
         if dev_path.exists() { dev_path } else { return None }
     };
 
-    let img = image::open(icon_path).ok()?;
-    let mut resized = img.resize_exact(64, 64, image::imageops::FilterType::Lanczos3);
-    let rgba_image = resized.as_mut_rgba8().unwrap();
+    let img = match image::open(&icon_path) {
+        Ok(img) => img,
+        Err(e) => {
+            log::error!("加载图标失败 {}: {}", icon_path.display(), e);
+            return None;
+        }
+    };
+    let resized = img.resize_exact(64, 64, image::imageops::FilterType::Lanczos3);
+    let mut rgba_image = resized.to_rgba8();
 
     // 将白色/近白色背景像素设为透明（alpha=0）
     for pixel in rgba_image.pixels_mut() {
@@ -120,10 +172,15 @@ fn create_tray_icon(icon_rgba: &Option<Vec<u8>>, show_flag: Arc<Mutex<bool>>) ->
     use tray_icon::{TrayIconBuilder, menu::{Menu, MenuEvent, MenuItem}};
 
     let tray_icon = if let Some(rgba) = icon_rgba {
-        let icon = tray_icon::Icon::from_rgba(rgba.clone(), 64, 64).ok()?;
-        TrayIconBuilder::new()
-            .with_tooltip("Cron-Ask-AI - 定时快捷键执行工具")
-            .with_icon(icon)
+        match tray_icon::Icon::from_rgba(rgba.clone(), 64, 64) {
+            Ok(icon) => TrayIconBuilder::new()
+                .with_tooltip("Cron-Ask-AI - 定时快捷键执行工具")
+                .with_icon(icon),
+            Err(e) => {
+                log::error!("创建托盘图标失败: {}", e);
+                return None;
+            }
+        }
     } else {
         // 无图标时用纯色占位
         let pixels: Vec<u8> = vec![0u8, 191, 255, 255].repeat(64 * 64); // 蓝色
@@ -144,10 +201,13 @@ fn create_tray_icon(icon_rgba: &Option<Vec<u8>>, show_flag: Arc<Mutex<bool>>) ->
     let show_id = show_item.id().clone();
     let quit_id = quit_item.id().clone();
 
-    let tray = tray_icon
-        .with_menu(Box::new(menu))
-        .build()
-        .ok()?;
+    let tray = match tray_icon.with_menu(Box::new(menu)).build() {
+        Ok(t) => t,
+        Err(e) => {
+            log::error!("构建托盘图标失败: {}", e);
+            return None;
+        }
+    };
 
     // 处理菜单事件
     let flag_show = show_flag.clone();
