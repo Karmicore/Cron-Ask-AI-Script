@@ -297,7 +297,7 @@ impl eframe::App for CronAskApp {
         // 4. 控制重绘频率 — 简化逻辑：每帧直接安排下一次重绘
         let has_active_tasks = self.config.tasks.iter().any(|t| t.enabled);
         let repaint_interval = if has_active_tasks {
-            std::time::Duration::from_secs(1)
+            std::time::Duration::from_millis(500)
         } else {
             std::time::Duration::from_secs(5)
         };

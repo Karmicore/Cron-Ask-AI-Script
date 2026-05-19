@@ -107,7 +107,8 @@ impl Scheduler {
     /// 创建调度器，返回 (Scheduler, 消息接收端)
     pub fn new(_tasks: Vec<Task>) -> (Self, std::sync::mpsc::Receiver<SchedulerMessage>) {
         let (msg_tx, msg_rx) = std::sync::mpsc::channel::<SchedulerMessage>();
-        let rt = tokio::runtime::Builder::new_current_thread()
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
             .enable_time()
             .build()
             .expect("Failed to create tokio runtime");

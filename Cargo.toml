@@ -19,7 +19,7 @@ image = "0.25"
 rdev = "0.5"
 
 # 异步运行时 + 定时调度（单线程足够，减少线程开销）
-tokio = { version = "1", features = ["rt", "time", "sync"] }
+tokio = { version = "1", features = ["rt-multi-thread", "time", "sync"] }
 
 # 序列化 + 配置
 serde = { version = "1", features = ["derive"] }
