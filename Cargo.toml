@@ -9,6 +9,12 @@ description = "定时快捷键执行工具 - 强制你高频使用AI"
 eframe = "0.29"
 egui = "0.29"
 
+# 系统托盘
+tray-icon = "0.19"
+
+# 图像解码（加载 PNG 图标）
+image = "0.25"
+
 # 键盘模拟
 rdev = "0.5"
 

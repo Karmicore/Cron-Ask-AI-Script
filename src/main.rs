@@ -5,6 +5,7 @@ use modules::scheduler::Scheduler;
 use modules::ui::CronAskApp;
 
 use eframe::egui;
+use std::sync::{Arc, Mutex};
 
 fn main() -> Result<(), eframe::Error> {
     // 初始化日志
@@ -20,16 +21,38 @@ fn main() -> Result<(), eframe::Error> {
     let (mut scheduler, scheduler_rx) = Scheduler::new(config.tasks.clone());
     scheduler.start_all(&config.tasks);
 
+    // 加载图标
+    let icon_rgba = load_icon();
+
+    // 托盘恢复窗口的共享标志
+    let show_window_flag = Arc::new(Mutex::new(true));
+
+    // 创建系统托盘
+    let _tray_icon = create_tray_icon(&icon_rgba, show_window_flag.clone());
+
     // 配置 eframe
+    let viewport = egui::ViewportBuilder::default()
+        .with_inner_size([640.0, 560.0])
+        .with_min_inner_size([480.0, 400.0]);
+
+    // 设置窗口图标
+    let viewport = if let Some(ref rgba) = icon_rgba {
+        viewport.with_icon(egui::IconData {
+            rgba: rgba.clone(),
+            width: 64,
+            height: 64,
+        })
+    } else {
+        viewport
+    };
+
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_inner_size([640.0, 560.0])
-            .with_min_inner_size([480.0, 400.0]),
+        viewport,
         ..Default::default()
     };
 
     // 创建应用
-    let app = CronAskApp::new(config, scheduler, scheduler_rx);
+    let app = CronAskApp::new(config, scheduler, scheduler_rx, show_window_flag);
 
     eframe::run_native(
         "Cron-Ask-AI v0.1.0",
@@ -47,7 +70,6 @@ fn main() -> Result<(), eframe::Error> {
                     "msyh".into(),
                     egui::FontData::from_owned(font_data),
                 );
-                // 将中文字体插入到所有字体的回退列表中
                 fonts.families.entry(egui::FontFamily::Proportional).or_default()
                     .push("msyh".into());
                 fonts.families.entry(egui::FontFamily::Monospace).or_default()
@@ -61,4 +83,84 @@ fn main() -> Result<(), eframe::Error> {
             Ok(Box::new(app))
         }),
     )
+}
+
+/// 加载图标 PNG 并转为 RGBA 字节
+fn load_icon() -> Option<Vec<u8>> {
+    let exe_dir = std::env::current_exe().ok()?;
+    let icon_path = exe_dir.parent()?.join("assets/icon.png");
+    let icon_path = if icon_path.exists() {
+        icon_path
+    } else {
+        // 开发模式：从项目根目录查找
+        let dev_path = std::path::PathBuf::from("assets/icon.png");
+        if dev_path.exists() { dev_path } else { return None }
+    };
+
+    let img = image::open(icon_path).ok()?;
+    let resized = img.resize_exact(64, 64, image::imageops::FilterType::Lanczos3);
+    Some(resized.to_rgba8().to_vec())
+}
+
+/// 创建系统托盘图标
+fn create_tray_icon(icon_rgba: &Option<Vec<u8>>, show_flag: Arc<Mutex<bool>>) -> Option<tray_icon::TrayIcon> {
+    use tray_icon::{TrayIconBuilder, menu::{Menu, MenuEvent, MenuItem}};
+
+    let tray_icon = if let Some(rgba) = icon_rgba {
+        let icon = tray_icon::Icon::from_rgba(rgba.clone(), 64, 64).ok()?;
+        TrayIconBuilder::new()
+            .with_tooltip("Cron-Ask-AI - 定时快捷键执行工具")
+            .with_icon(icon)
+    } else {
+        // 无图标时用纯色占位
+        let pixels: Vec<u8> = vec![0u8, 191, 255, 255].repeat(64 * 64); // 蓝色
+        let icon = tray_icon::Icon::from_rgba(pixels, 64, 64).ok()?;
+        TrayIconBuilder::new()
+            .with_tooltip("Cron-Ask-AI")
+            .with_icon(icon)
+    };
+
+    // 右键菜单
+    let menu = Menu::new();
+    let show_item = MenuItem::new("显示窗口", true, None);
+    let quit_item = MenuItem::new("退出", true, None);
+    menu.append(&show_item).ok()?;
+    menu.append(&quit_item).ok()?;
+
+    // 提前提取 ID（MenuItem 不是 Send+Sync，但 MenuId 的内部字符串是）
+    let show_id = show_item.id().clone();
+    let quit_id = quit_item.id().clone();
+
+    let tray = tray_icon
+        .with_menu(Box::new(menu))
+        .build()
+        .ok()?;
+
+    // 处理菜单事件
+    let flag_show = show_flag.clone();
+    MenuEvent::set_event_handler(Some(move |event: tray_icon::menu::MenuEvent| {
+        if event.id == show_id {
+            if let Ok(mut v) = flag_show.lock() {
+                *v = true;
+            }
+        } else if event.id == quit_id {
+            std::process::exit(0);
+        }
+    }));
+
+    // 处理托盘图标点击（左键）
+    let flag_click = show_flag.clone();
+    tray_icon::TrayIconEvent::set_event_handler(Some(move |event| {
+        if let tray_icon::TrayIconEvent::Click {
+            button: tray_icon::MouseButton::Left,
+            button_state: tray_icon::MouseButtonState::Up,
+            ..
+        } = event {
+            if let Ok(mut v) = flag_click.lock() {
+                *v = true;
+            }
+        }
+    }));
+
+    Some(tray)
 }

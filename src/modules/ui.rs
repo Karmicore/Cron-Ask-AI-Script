@@ -1,5 +1,6 @@
 use eframe::egui;
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use super::config::*;
@@ -26,6 +27,8 @@ pub struct CronAskApp {
     scheduler_rx: Option<std::sync::mpsc::Receiver<SchedulerMessage>>,
     /// 表单验证错误
     form_error: Option<String>,
+    /// 托盘恢复窗口标志
+    show_window_flag: Option<Arc<Mutex<bool>>>,
 }
 
 #[derive(Debug)]
@@ -38,7 +41,12 @@ pub enum PendingAction {
 }
 
 impl CronAskApp {
-    pub fn new(config: AppConfig, scheduler: Scheduler, scheduler_rx: std::sync::mpsc::Receiver<SchedulerMessage>) -> Self {
+    pub fn new(
+        config: AppConfig,
+        scheduler: Scheduler,
+        scheduler_rx: std::sync::mpsc::Receiver<SchedulerMessage>,
+        show_window_flag: Arc<Mutex<bool>>,
+    ) -> Self {
         Self {
             config,
             next_triggers: HashMap::new(),
@@ -51,6 +59,7 @@ impl CronAskApp {
             scheduler: Some(scheduler),
             scheduler_rx: Some(scheduler_rx),
             form_error: None,
+            show_window_flag: Some(show_window_flag),
         }
     }
 
@@ -270,6 +279,17 @@ impl CronAskApp {
 
 impl eframe::App for CronAskApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // 0. 检查托盘恢复窗口请求
+        if let Some(ref flag) = self.show_window_flag {
+            if let Ok(mut v) = flag.lock() {
+                if *v {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+                    // 重置标志，避免重复发送
+                    *v = false;
+                }
+            }
+        }
+
         // 1. 处理调度器消息
         self.poll_scheduler_messages(ctx);
 
@@ -620,5 +640,16 @@ impl CronAskApp {
                 }
             }
         });
+    }
+
+    /// 拦截窗口关闭事件：隐藏到托盘而非退出
+    fn on_close_event(&mut self) -> bool {
+        if let Some(ref flag) = self.show_window_flag {
+            if let Ok(mut v) = flag.lock() {
+                *v = false;
+            }
+        }
+        log::info!("窗口已隐藏到系统托盘");
+        false // 阻止关闭
     }
 }
