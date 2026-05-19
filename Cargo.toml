@@ -1,0 +1,35 @@
+[package]
+name = "cron-ask-ai"
+version = "0.1.0"
+edition = "2021"
+description = "定时快捷键执行工具 - 强制你高频使用AI"
+
+[dependencies]
+# GUI - 纯 Rust 即时模式渲染
+eframe = "0.29"
+egui = "0.29"
+
+# 键盘模拟
+rdev = "0.5"
+
+# 异步运行时 + 定时调度
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "time", "sync"] }
+
+# 序列化 + 配置
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+
+# 时间处理
+chrono = "0.4"
+
+# 随机数（随机偏移）
+rand = "0.8"
+
+# 日志
+log = "0.4"
+env_logger = "0.11"
+
+[profile.release]
+opt-level = 3
+lto = true
+strip = true
