@@ -72,21 +72,34 @@ impl CronAskApp {
 
     /// 处理调度器消息（非阻塞）
     fn poll_scheduler_messages(&mut self, ctx: &egui::Context) {
-        // 先收集所有消息，避免借用冲突
-        let messages: Vec<SchedulerMessage> = if let Some(ref rx) = self.scheduler_rx {
-            std::iter::from_fn(|| rx.try_recv().ok()).collect()
+        // 先收集所有消息，避免 rx 借用与 self 借用冲突
+        let (messages, disconnected) = if let Some(ref rx) = self.scheduler_rx {
+            let mut msgs = Vec::new();
+            let mut disconnected = false;
+            loop {
+                match rx.try_recv() {
+                    Ok(msg) => msgs.push(msg),
+                    Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                    Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                        disconnected = true;
+                        break;
+                    }
+                }
+            }
+            (msgs, disconnected)
         } else {
-            Vec::new()
+            return;
         };
 
-        for msg in messages {
-            match &msg {
+        let mut need_repaint = false;
+
+        for msg in &messages {
+            match msg {
                 SchedulerMessage::Triggered {
                     task_name,
                     hotkey,
                     ..
                 } => {
-                    // 在后台线程执行快捷键，不阻塞 UI
                     keyboard::execute_hotkey_async(
                         hotkey.modifiers.clone(),
                         hotkey.key.clone(),
@@ -101,15 +114,27 @@ impl CronAskApp {
                     }
                 }
             }
+            need_repaint = true;
+        }
+
+        if disconnected {
+            self.scheduler_rx = None;
+        }
+
+        if need_repaint {
             ctx.request_repaint();
         }
     }
 
-    /// 通知调度器配置变更
+    /// 通知调度器配置变更，同时清理过期的 next_triggers 条目
     fn notify_scheduler_reload(&mut self) {
         if let Some(ref mut scheduler) = self.scheduler {
             scheduler.reload_tasks(self.config.tasks.clone());
         }
+        // 清理不在当前任务列表中的 next_triggers 条目
+        let task_ids: std::collections::HashSet<String> =
+            self.config.tasks.iter().map(|t| t.id.clone()).collect();
+        self.next_triggers.retain(|id, _| task_ids.contains(id));
     }
 
     /// 验证任务表单，返回错误信息（None 表示合法）

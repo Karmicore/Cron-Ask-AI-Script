@@ -18,45 +18,56 @@ fn modifier_to_key(modifier: &ModifierKey) -> Key {
     }
 }
 
-/// 将配置中的主键字符串映射到 rdev 的 Key
+/// 将配置中的主键字符串映射到 rdev 的 Key（零分配，直接比较字节）
 fn key_from_str(key: &str) -> Option<Key> {
-    match key.to_uppercase().as_str() {
-        // 字母键
-        "A" => Some(Key::KeyA), "B" => Some(Key::KeyB), "C" => Some(Key::KeyC),
-        "D" => Some(Key::KeyD), "E" => Some(Key::KeyE), "F" => Some(Key::KeyF),
-        "G" => Some(Key::KeyG), "H" => Some(Key::KeyH), "I" => Some(Key::KeyI),
-        "J" => Some(Key::KeyJ), "K" => Some(Key::KeyK), "L" => Some(Key::KeyL),
-        "M" => Some(Key::KeyM), "N" => Some(Key::KeyN), "O" => Some(Key::KeyO),
-        "P" => Some(Key::KeyP), "Q" => Some(Key::KeyQ), "R" => Some(Key::KeyR),
-        "S" => Some(Key::KeyS), "T" => Some(Key::KeyT), "U" => Some(Key::KeyU),
-        "V" => Some(Key::KeyV), "W" => Some(Key::KeyW), "X" => Some(Key::KeyX),
-        "Y" => Some(Key::KeyY), "Z" => Some(Key::KeyZ),
+    match key.as_bytes() {
+        // 字母键（大写）
+        b"A" => Some(Key::KeyA), b"B" => Some(Key::KeyB), b"C" => Some(Key::KeyC),
+        b"D" => Some(Key::KeyD), b"E" => Some(Key::KeyE), b"F" => Some(Key::KeyF),
+        b"G" => Some(Key::KeyG), b"H" => Some(Key::KeyH), b"I" => Some(Key::KeyI),
+        b"J" => Some(Key::KeyJ), b"K" => Some(Key::KeyK), b"L" => Some(Key::KeyL),
+        b"M" => Some(Key::KeyM), b"N" => Some(Key::KeyN), b"O" => Some(Key::KeyO),
+        b"P" => Some(Key::KeyP), b"Q" => Some(Key::KeyQ), b"R" => Some(Key::KeyR),
+        b"S" => Some(Key::KeyS), b"T" => Some(Key::KeyT), b"U" => Some(Key::KeyU),
+        b"V" => Some(Key::KeyV), b"W" => Some(Key::KeyW), b"X" => Some(Key::KeyX),
+        b"Y" => Some(Key::KeyY), b"Z" => Some(Key::KeyZ),
+        // 字母键（小写）
+        b"a" => Some(Key::KeyA), b"b" => Some(Key::KeyB), b"c" => Some(Key::KeyC),
+        b"d" => Some(Key::KeyD), b"e" => Some(Key::KeyE), b"f" => Some(Key::KeyF),
+        b"g" => Some(Key::KeyG), b"h" => Some(Key::KeyH), b"i" => Some(Key::KeyI),
+        b"j" => Some(Key::KeyJ), b"k" => Some(Key::KeyK), b"l" => Some(Key::KeyL),
+        b"m" => Some(Key::KeyM), b"n" => Some(Key::KeyN), b"o" => Some(Key::KeyO),
+        b"p" => Some(Key::KeyP), b"q" => Some(Key::KeyQ), b"r" => Some(Key::KeyR),
+        b"s" => Some(Key::KeyS), b"t" => Some(Key::KeyT), b"u" => Some(Key::KeyU),
+        b"v" => Some(Key::KeyV), b"w" => Some(Key::KeyW), b"x" => Some(Key::KeyX),
+        b"y" => Some(Key::KeyY), b"z" => Some(Key::KeyZ),
         // 数字键
-        "0" => Some(Key::Num0), "1" => Some(Key::Num1), "2" => Some(Key::Num2),
-        "3" => Some(Key::Num3), "4" => Some(Key::Num4), "5" => Some(Key::Num5),
-        "6" => Some(Key::Num6), "7" => Some(Key::Num7), "8" => Some(Key::Num8),
-        "9" => Some(Key::Num9),
-        // 功能键
-        "F1" => Some(Key::F1), "F2" => Some(Key::F2), "F3" => Some(Key::F3),
-        "F4" => Some(Key::F4), "F5" => Some(Key::F5), "F6" => Some(Key::F6),
-        "F7" => Some(Key::F7), "F8" => Some(Key::F8), "F9" => Some(Key::F9),
-        "F10" => Some(Key::F10), "F11" => Some(Key::F11), "F12" => Some(Key::F12),
-        // 特殊键
-        "SPACE" => Some(Key::Space),
-        "ENTER" | "RETURN" => Some(Key::Return),
-        "TAB" => Some(Key::Tab),
-        "ESCAPE" | "ESC" => Some(Key::Escape),
-        "BACKSPACE" => Some(Key::Backspace),
-        "DELETE" | "DEL" => Some(Key::Delete),
-        "HOME" => Some(Key::Home),
-        "END" => Some(Key::End),
-        "PAGEUP" => Some(Key::PageUp),
-        "PAGEDOWN" => Some(Key::PageDown),
-        "UP" => Some(Key::UpArrow),
-        "DOWN" => Some(Key::DownArrow),
-        "LEFT" => Some(Key::LeftArrow),
-        "RIGHT" => Some(Key::RightArrow),
-        _ => None,
+        b"0" => Some(Key::Num0), b"1" => Some(Key::Num1), b"2" => Some(Key::Num2),
+        b"3" => Some(Key::Num3), b"4" => Some(Key::Num4), b"5" => Some(Key::Num5),
+        b"6" => Some(Key::Num6), b"7" => Some(Key::Num7), b"8" => Some(Key::Num8),
+        b"9" => Some(Key::Num9),
+        // 功能键 & 特殊键（多字节，按 &str 匹配）
+        _ => match key {
+            "F1" => Some(Key::F1), "F2" => Some(Key::F2), "F3" => Some(Key::F3),
+            "F4" => Some(Key::F4), "F5" => Some(Key::F5), "F6" => Some(Key::F6),
+            "F7" => Some(Key::F7), "F8" => Some(Key::F8), "F9" => Some(Key::F9),
+            "F10" => Some(Key::F10), "F11" => Some(Key::F11), "F12" => Some(Key::F12),
+            "Space" | "SPACE" => Some(Key::Space),
+            "Enter" | "ENTER" | "Return" | "RETURN" => Some(Key::Return),
+            "Tab" | "TAB" => Some(Key::Tab),
+            "Escape" | "ESC" | "Esc" => Some(Key::Escape),
+            "Backspace" | "BACKSPACE" => Some(Key::Backspace),
+            "Delete" | "DEL" | "Del" => Some(Key::Delete),
+            "Home" | "HOME" => Some(Key::Home),
+            "End" | "END" => Some(Key::End),
+            "PageUp" | "PAGEUP" => Some(Key::PageUp),
+            "PageDown" | "PAGEDOWN" => Some(Key::PageDown),
+            "Up" | "UP" => Some(Key::UpArrow),
+            "Down" | "DOWN" => Some(Key::DownArrow),
+            "Left" | "LEFT" => Some(Key::LeftArrow),
+            "Right" | "RIGHT" => Some(Key::RightArrow),
+            _ => None,
+        },
     }
 }
 
@@ -122,9 +133,17 @@ pub fn execute_hotkey_sync(modifiers: &[ModifierKey], key: &str) -> Result<(), S
     let main_key = key_from_str(key).ok_or_else(|| format!("未知按键: {}", key))?;
     let mod_keys: Vec<Key> = modifiers.iter().map(modifier_to_key).collect();
 
-    log::info!("执行快捷键: {}+{}",
-        modifiers.iter().map(|m| m.display_name()).collect::<Vec<_>>().join("+"),
-        key
+    log::info!("执行快捷键: {}",
+        {
+            let mut s = String::with_capacity(32);
+            for (i, m) in modifiers.iter().enumerate() {
+                if i > 0 { s.push('+'); }
+                s.push_str(m.display_name());
+            }
+            s.push('+');
+            s.push_str(key);
+            s
+        }
     );
 
     // 使用 RAII 守卫按下修饰键 — 即使 panic 也能释放

@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 /// 触发模式
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -243,18 +244,21 @@ impl Default for AppConfig {
 }
 
 impl AppConfig {
-    pub fn config_path() -> PathBuf {
-        let mut path = dirs_config_dir();
-        path.push("cron-ask-ai");
-        fs::create_dir_all(&path).ok();
-        path.push("config.toml");
-        path
+    pub fn config_path() -> &'static Path {
+        static CONFIG_PATH: OnceLock<PathBuf> = OnceLock::new();
+        CONFIG_PATH.get_or_init(|| {
+            let mut path = dirs_config_dir();
+            path.push("cron-ask-ai");
+            fs::create_dir_all(&path).ok();
+            path.push("config.toml");
+            path
+        })
     }
 
     pub fn load() -> Self {
         let path = Self::config_path();
         if path.exists() {
-            match fs::read_to_string(&path) {
+            match fs::read_to_string(path) {
                 Ok(content) => match toml::from_str::<AppConfig>(&content) {
                     Ok(mut config) => {
                         // 加载后验证并修复
@@ -285,7 +289,7 @@ impl AppConfig {
         let path = Self::config_path();
         match toml::to_string_pretty(self) {
             Ok(content) => {
-                if let Err(e) = fs::write(&path, content) {
+                if let Err(e) = fs::write(path, content) {
                     log::error!("配置文件保存失败: {}", e);
                 }
             }
