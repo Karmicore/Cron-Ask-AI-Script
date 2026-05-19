@@ -12,20 +12,18 @@ const STATUS_MESSAGE_TTL_SECS: f64 = 5.0;
 /// 主应用状态
 pub struct CronAskApp {
     pub config: AppConfig,
-    pub show_window: bool,
     pub next_triggers: HashMap<String, chrono::DateTime<chrono::Local>>,
     pub last_trigger_info: Option<String>,
     pub editing_task_idx: Option<usize>,
     pub new_task: Option<Task>,
     pub status_message: Option<String>,
     pub status_message_set_at: Option<Instant>,
-    pub pending_action: Option<PendingAction>,
+    /// 挂起操作队列（支持同一帧多个操作）
+    pending_actions: Vec<PendingAction>,
     /// 调度器引用
     scheduler: Option<Scheduler>,
     /// 调度器消息接收端
     scheduler_rx: Option<std::sync::mpsc::Receiver<SchedulerMessage>>,
-    /// 上次重绘时间，用于控制刷新频率
-    last_repaint: Instant,
     /// 表单验证错误
     form_error: Option<String>,
 }
@@ -43,17 +41,15 @@ impl CronAskApp {
     pub fn new(config: AppConfig, scheduler: Scheduler, scheduler_rx: std::sync::mpsc::Receiver<SchedulerMessage>) -> Self {
         Self {
             config,
-            show_window: true,
             next_triggers: HashMap::new(),
             last_trigger_info: None,
             editing_task_idx: None,
             new_task: Some(Task::default()),
             status_message: None,
             status_message_set_at: None,
-            pending_action: None,
+            pending_actions: Vec::new(),
             scheduler: Some(scheduler),
             scheduler_rx: Some(scheduler_rx),
-            last_repaint: Instant::now(),
             form_error: None,
         }
     }
@@ -141,6 +137,11 @@ impl CronAskApp {
                 if offset_min > offset_max {
                     return Some("最小偏移不能大于最大偏移".to_string());
                 }
+                // 新增：验证偏移量不应超过基础时长
+                let base_secs = base_minutes * 60 + base_seconds;
+                if offset_max >= base_secs {
+                    return Some("最大偏移不应超过基础时长".to_string());
+                }
             }
         }
         if task.hotkey.key.is_empty() {
@@ -169,9 +170,12 @@ impl CronAskApp {
         }
     }
 
-    /// 处理挂起的操作
+    /// 处理挂起的操作队列
     pub fn process_pending_actions(&mut self) {
-        if let Some(action) = self.pending_action.take() {
+        // 先取走所有挂起操作，避免借用冲突
+        let actions: Vec<PendingAction> = self.pending_actions.drain(..).collect();
+
+        for action in actions {
             let need_reload = match action {
                 PendingAction::SaveTask => {
                     if let Some(ref task) = self.new_task {
@@ -180,7 +184,7 @@ impl CronAskApp {
                             self.form_error = Some(err);
                             // 不清除 new_task，让用户继续编辑
                             self.new_task = Some(task.clone());
-                            return;
+                            continue;
                         }
                         self.form_error = None;
 
@@ -250,22 +254,14 @@ impl eframe::App for CronAskApp {
         // 3. 检查状态消息过期
         self.check_status_expiry();
 
-        if !self.show_window {
-            return;
-        }
-
-        // 4. 控制重绘频率
+        // 4. 控制重绘频率 — 简化逻辑：每帧直接安排下一次重绘
         let has_active_tasks = self.config.tasks.iter().any(|t| t.enabled);
         let repaint_interval = if has_active_tasks {
             std::time::Duration::from_secs(1)
         } else {
             std::time::Duration::from_secs(5)
         };
-
-        if self.last_repaint.elapsed() >= repaint_interval {
-            ctx.request_repaint_after(repaint_interval);
-            self.last_repaint = Instant::now();
-        }
+        ctx.request_repaint_after(repaint_interval);
 
         // 5. 顶部标题栏
         egui::TopBottomPanel::top("title_bar").show(ctx, |ui| {
@@ -407,12 +403,12 @@ impl CronAskApp {
             ui.add_space(4.0);
         }
 
-        // 在借用外应用操作
+        // 在借用外应用操作 — 使用 Vec 支持同一帧多个操作
         if let Some(idx) = delete_idx {
-            self.pending_action = Some(PendingAction::DeleteTask(idx));
+            self.pending_actions.push(PendingAction::DeleteTask(idx));
         }
         if let Some(idx) = toggle_idx {
-            self.pending_action = Some(PendingAction::ToggleTask(idx));
+            self.pending_actions.push(PendingAction::ToggleTask(idx));
         }
         if let Some(idx) = edit_idx {
             self.editing_task_idx = Some(idx);
@@ -578,23 +574,25 @@ impl CronAskApp {
         ui.add_space(8.0);
 
         // 存回 task
-        let task_clone = task.clone();
         self.new_task = Some(task);
 
         ui.horizontal(|ui| {
             if ui.button(if is_editing { "💾 保存修改" } else { "➕ 添加任务" }).clicked() {
-                self.pending_action = Some(PendingAction::SaveTask);
+                self.pending_actions.push(PendingAction::SaveTask);
             }
 
             if is_editing && ui.button("❌ 取消").clicked() {
-                self.pending_action = Some(PendingAction::CancelEdit);
+                self.pending_actions.push(PendingAction::CancelEdit);
             }
 
             if ui.button("🧪 测试快捷键").clicked() {
-                self.pending_action = Some(PendingAction::TestHotkey {
-                    modifiers: task_clone.hotkey.modifiers.clone(),
-                    key: task_clone.hotkey.key.clone(),
-                });
+                // 只在点击时 clone，而非每帧
+                if let Some(ref task) = self.new_task {
+                    self.pending_actions.push(PendingAction::TestHotkey {
+                        modifiers: task.hotkey.modifiers.clone(),
+                        key: task.hotkey.key.clone(),
+                    });
+                }
             }
         });
     }

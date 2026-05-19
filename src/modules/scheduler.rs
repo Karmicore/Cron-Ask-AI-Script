@@ -23,22 +23,26 @@ pub enum SchedulerMessage {
     },
 }
 
-/// 计算下次触发的延迟时间
+/// 计算下次触发的延迟时间（安全版本，不会 panic）
 pub fn compute_next_delay(trigger: &TriggerMode) -> (Duration, Option<chrono::DateTime<Local>>) {
     match trigger {
         TriggerMode::Clock { hour, minute } => {
             let now = Local::now();
+            // 将 hour/minute 钳位到合法范围，防止配置文件中写了非法值
+            let h = (*hour).min(23);
+            let m = (*minute).min(59);
+
             let target_naive = now.date_naive()
-                .and_hms_opt(*hour, *minute, 0)
-                .unwrap();
+                .and_hms_opt(h, m, 0)
+                .unwrap_or_else(|| now.date_naive().and_hms_opt(0, 0, 0).unwrap());
             let target_dt = Local.from_local_datetime(&target_naive)
                 .single()
                 .unwrap_or_else(|| now);
 
             let target_dt = if target_dt <= now {
                 let tomorrow = (now.date_naive() + chrono::Duration::days(1))
-                    .and_hms_opt(*hour, *minute, 0)
-                    .unwrap();
+                    .and_hms_opt(h, m, 0)
+                    .unwrap_or_else(|| now.date_naive().and_hms_opt(0, 0, 0).unwrap());
                 Local.from_local_datetime(&tomorrow)
                     .single()
                     .unwrap_or_else(|| now)
@@ -51,6 +55,8 @@ pub fn compute_next_delay(trigger: &TriggerMode) -> (Duration, Option<chrono::Da
         }
         TriggerMode::Countdown { minutes, seconds } => {
             let total_secs = minutes * 60 + seconds;
+            // 防止配置了 0 时长导致无限循环
+            let total_secs = total_secs.max(1);
             let next = Local::now() + chrono::Duration::seconds(total_secs as i64);
             (Duration::from_secs(total_secs), Some(next))
         }
@@ -66,6 +72,9 @@ pub fn compute_next_delay(trigger: &TriggerMode) -> (Duration, Option<chrono::Da
             let offset_min_secs = offset_min_minutes * 60 + offset_min_seconds;
             let offset_max_secs = offset_max_minutes * 60 + offset_max_seconds;
 
+            // 确保 offset_min <= offset_max
+            let offset_min_secs = offset_min_secs.min(offset_max_secs);
+
             let mut rng = rand::thread_rng();
             // 在 [offset_min, offset_max] 范围内随机选一个偏移量
             let offset: u64 = if offset_min_secs == offset_max_secs {
@@ -77,6 +86,10 @@ pub fn compute_next_delay(trigger: &TriggerMode) -> (Duration, Option<chrono::Da
             // 随机方向：加上偏移 或 减去偏移
             let positive: bool = rng.gen();
             let final_offset = if positive { offset as i64 } else { -(offset as i64) };
+
+            // 限制偏移量不超过 base 的 90%，避免偏移量过大导致极短间隔
+            let max_offset = (base_secs as f64 * 0.9) as i64;
+            let final_offset = final_offset.clamp(-max_offset, max_offset);
 
             let total_secs = (base_secs as i64 + final_offset).max(1) as u64;
             let next = Local::now() + chrono::Duration::seconds(total_secs as i64);
@@ -118,7 +131,7 @@ impl Scheduler {
 
     /// 停止所有任务 — 真正取消 tokio task（abort）
     pub fn stop_all(&mut self) {
-        let mut handles = self.active_handles.lock().unwrap();
+        let mut handles = self.active_handles.lock().unwrap_or_else(|e| e.into_inner());
         for (_, handle) in handles.drain(..) {
             handle.abort();
         }
@@ -127,7 +140,7 @@ impl Scheduler {
     /// 停止指定任务
     #[allow(dead_code)]
     pub fn stop_task(&mut self, task_id: &str) {
-        let mut handles = self.active_handles.lock().unwrap();
+        let mut handles = self.active_handles.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(pos) = handles.iter().position(|(id, _)| id == task_id) {
             let (_, handle) = handles.remove(pos);
             handle.abort();
@@ -167,7 +180,7 @@ impl Scheduler {
             }
         });
 
-        self.active_handles.lock().unwrap().push((task_id, handle));
+        self.active_handles.lock().unwrap_or_else(|e| e.into_inner()).push((task_id, handle));
     }
 }
 

@@ -1,8 +1,12 @@
 use rdev::{simulate, EventType, Key};
+use std::sync::Mutex;
 use std::thread;
 use std::time::Duration;
 
 use super::config::ModifierKey;
+
+/// 全局互斥锁，确保快捷键串行执行（避免并发冲突和线程爆炸）
+static HOTKEY_LOCK: Mutex<()> = Mutex::new(());
 
 /// 将配置中的修饰键映射到 rdev 的 Key
 fn modifier_to_key(modifier: &ModifierKey) -> Key {
@@ -72,9 +76,41 @@ fn send_key_release(key: Key) {
     }
 }
 
-/// 在后台线程执行快捷键（避免阻塞 UI 线程）
+/// RAII 按键守卫 — 即使 panic 也能确保释放按键
+struct KeyGuard {
+    key: Key,
+    released: bool,
+}
+
+impl KeyGuard {
+    fn press(key: Key) -> Self {
+        send_key_press(key);
+        KeyGuard {
+            key,
+            released: false,
+        }
+    }
+
+    /// 手动释放（避免 Drop 中重复释放）
+    fn release(&mut self) {
+        if !self.released {
+            send_key_release(self.key);
+            self.released = true;
+        }
+    }
+}
+
+impl Drop for KeyGuard {
+    fn drop(&mut self) {
+        self.release();
+    }
+}
+
+/// 在后台线程执行快捷键（避免阻塞 UI 线程），使用全局锁串行化
 pub fn execute_hotkey_async(modifiers: Vec<ModifierKey>, key: String) {
     thread::spawn(move || {
+        // 获取全局锁，确保同一时刻只有一个快捷键在执行
+        let _lock = HOTKEY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         if let Err(e) = execute_hotkey_sync(&modifiers, &key) {
             log::error!("快捷键执行失败: {}", e);
         }
@@ -91,22 +127,22 @@ pub fn execute_hotkey_sync(modifiers: &[ModifierKey], key: &str) -> Result<(), S
         key
     );
 
-    // 按下所有修饰键
-    for mk in &mod_keys {
-        send_key_press(*mk);
-    }
+    // 使用 RAII 守卫按下修饰键 — 即使 panic 也能释放
+    let mut mod_guards: Vec<KeyGuard> = mod_keys.iter().map(|k| KeyGuard::press(*k)).collect();
 
     // 短暂延迟确保修饰键生效
     thread::sleep(Duration::from_millis(50));
 
-    // 按下主键
-    send_key_press(main_key);
-    thread::sleep(Duration::from_millis(30));
-    send_key_release(main_key);
+    // 按下并释放主键
+    {
+        let mut main_guard = KeyGuard::press(main_key);
+        thread::sleep(Duration::from_millis(30));
+        main_guard.release();
+    }
 
-    // 释放所有修饰键（逆序）
-    for mk in mod_keys.iter().rev() {
-        send_key_release(*mk);
+    // 逆序释放所有修饰键（RAII 也会在 drop 时释放，但显式释放更可控）
+    for guard in mod_guards.iter_mut().rev() {
+        guard.release();
     }
 
     Ok(())
